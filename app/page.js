@@ -1,9 +1,15 @@
-export default function Home() {
-    return (
-      <main style={{ padding: "2rem", textAlign: "center" }}>
-        <h1>🚀 LIFE App is Live!</h1>
-        <p>Your AI personal assistant, right here.</p>
-      </main>
-    );
-  }
-  
+"use client";
+
+import AIResponse from "../components/AIResponse";
+
+export default function HomePage() {
+  return (
+    <main className="p-8 max-w-3xl mx-auto">
+      <h1 className="text-3xl font-bold mb-4">Welcome to LIFE 🚀</h1>
+      <p className="text-lg mb-6">Your AI personal assistant, right here.</p>
+
+      <AIResponse />
+    </main>
+  );
+}
+
