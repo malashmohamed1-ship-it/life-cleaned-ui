@@ -12,3 +12,18 @@
 
 # misc
 .DS_Store
+
+# Next.js
+.next
+out
+
+# deps
+node_modules
+
+# env
+.env.local
+.env
+.env.*.local
+
+# misc
+.DS_Store
