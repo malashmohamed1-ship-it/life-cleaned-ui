@@ -62,14 +62,14 @@ function FeedbackInline({ prompt, answer, onSubmitted }) {
     <div className="mt-2 flex flex-col gap-2">
       <div className="flex items-center gap-3">
         <button
-          onClick={() => send("up")}
+          onClick={() => send("👍")}
           disabled={busy}
           className="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50"
         >
           👍
         </button>
         <button
-          onClick={() => send("down")}
+          onClick={() => send("👎")}
           disabled={busy}
           className="px-3 py-1 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50"
         >
