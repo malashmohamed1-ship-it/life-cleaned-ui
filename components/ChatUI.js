@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { db } from "../lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
+/** Tiny typing indicator */
 function TypingDots() {
   return (
     <div className="flex gap-1 items-center text-gray-500 mt-2">
@@ -13,14 +14,17 @@ function TypingDots() {
   );
 }
 
+/** Chat bubble */
 function Bubble({ role, children }) {
   const isUser = role === "user";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-2`}>
       <div
         className={[
-          "max-w-[80%] rounded-2xl px-4 py-3 shadow",
-          isUser ? "bg-blue-600 text-white" : "bg-white text-gray-900 border",
+          "max-w-[80%] rounded-2xl px-4 py-3 shadow-sm border leading-relaxed",
+          isUser
+            ? "bg-black text-white border-black/10 dark:bg-white dark:text-black dark:border-white/10"
+            : "bg-white text-slate-900 border-slate-200 dark:bg-slate-900 dark:text-slate-50 dark:border-slate-800",
         ].join(" ")}
       >
         <div className="whitespace-pre-wrap">{children}</div>
@@ -29,6 +33,7 @@ function Bubble({ role, children }) {
   );
 }
 
+/** Per-message feedback */
 function FeedbackInline({ prompt, answer, onSubmitted }) {
   const [feedbackText, setFeedbackText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +51,7 @@ function FeedbackInline({ prompt, answer, onSubmitted }) {
       onSubmitted?.();
     } catch (e) {
       console.error("Feedback error:", e);
-      onSubmitted?.();
+      onSubmitted?.(); // still hide to avoid blocking UX
     } finally {
       setBusy(false);
       setFeedbackText("");
@@ -78,7 +83,7 @@ function FeedbackInline({ prompt, answer, onSubmitted }) {
           value={feedbackText}
           onChange={(e) => setFeedbackText(e.target.value)}
           placeholder="Write feedback (optional)…"
-          className="flex-1 p-2 border rounded-lg"
+          className="flex-1 p-2 border rounded-lg bg-transparent"
         />
         <button
           onClick={() => feedbackText.trim() && send("text", feedbackText)}
@@ -93,10 +98,17 @@ function FeedbackInline({ prompt, answer, onSubmitted }) {
 }
 
 export default function ChatUI() {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([]); // [{id, role: 'user'|'assistant', content, feedbackDone?, pairedPrompt?}]
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+  const endRef = useRef(null);
 
+  // scroll to bottom when messages/thinking changes
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, thinking]);
+
+  // helper id
   const makeId = () =>
     typeof crypto?.randomUUID === "function"
       ? crypto.randomUUID()
@@ -119,7 +131,7 @@ export default function ChatUI() {
         body: JSON.stringify({ prompt }),
       });
       const data = await res.json();
-      const answer = data.answer || "Sorry, no response.";
+      const answer = data?.answer || "Sorry, no response.";
 
       const aiMsg = {
         id: makeId(),
@@ -128,7 +140,6 @@ export default function ChatUI() {
         feedbackDone: false,
         pairedPrompt: prompt,
       };
-
       setMessages((m) => [...m, aiMsg]);
     } catch (err) {
       console.error("AI error:", err);
@@ -154,7 +165,8 @@ export default function ChatUI() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)]">
+    <div className="flex flex-col h-[70vh] md:h-[72vh]">
+      {/* scrollable thread */}
       <div className="flex-1 overflow-y-auto pr-1">
         {messages.length === 0 && (
           <div className="text-gray-500 text-sm py-4">
@@ -192,21 +204,24 @@ export default function ChatUI() {
             </Bubble>
           </div>
         )}
+
+        <div ref={endRef} />
       </div>
 
-      <form onSubmit={handleSend} className="sticky bottom-0 mt-4">
-        <div className="flex gap-2 bg-white border rounded-2xl p-2 shadow">
+      {/* sticky input */}
+      <form onSubmit={handleSend} className="sticky bottom-0 mt-3">
+        <div className="flex gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 shadow-sm">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Message LIFE…"
-            className="flex-1 px-3 py-2 rounded-xl outline-none"
+            className="flex-1 px-3 py-2 rounded-xl outline-none bg-transparent"
           />
           <button
             type="submit"
             disabled={thinking}
-            className="px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 rounded-xl bg-black text-white dark:bg-white dark:text-black hover:opacity-90 disabled:opacity-50"
           >
             {thinking ? "Thinking…" : "Send"}
           </button>
