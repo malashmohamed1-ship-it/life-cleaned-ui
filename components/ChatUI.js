@@ -46,7 +46,7 @@ function FeedbackInline({ prompt, answer, onSubmitted }) {
       onSubmitted?.();
     } catch (e) {
       console.error("Feedback error:", e);
-      onSubmitted?.(); // still hide to avoid blocking UX
+      onSubmitted?.();
     } finally {
       setBusy(false);
       setFeedbackText("");
@@ -97,7 +97,6 @@ export default function ChatUI() {
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
 
-  // small helper in case crypto.randomUUID is not available (older browsers)
   const makeId = () =>
     typeof crypto?.randomUUID === "function"
       ? crypto.randomUUID()
@@ -133,14 +132,16 @@ export default function ChatUI() {
       setMessages((m) => [...m, aiMsg]);
     } catch (err) {
       console.error("AI error:", err);
-      const aiMsg = {
-        id: makeId(),
-        role: "assistant",
-        content: "⚠️ LIFE ran into an error.",
-        feedbackDone: false,
-        pairedPrompt: prompt,
-      };
-      setMessages((m) => [...m, aiMsg]);
+      setMessages((m) => [
+        ...m,
+        {
+          id: makeId(),
+          role: "assistant",
+          content: "⚠️ LIFE ran into an error.",
+          feedbackDone: false,
+          pairedPrompt: prompt,
+        },
+      ]);
     } finally {
       setThinking(false);
     }
