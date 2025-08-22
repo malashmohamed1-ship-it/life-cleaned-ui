@@ -1,15 +1,47 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: smooth font rendering */
-html {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* ---- Design tokens (simple, neutral palette) ---- */
+:root{
+  --bg: #f7f8fb;
+  --card: #ffffff;
+  --text: #0f172a;        /* slate-900-ish */
+  --muted: #6b7280;       /* gray-500 */
+  --border: #e5e7eb;      /* gray-200 */
+  --brand: #0b0f19;       /* deep navy/black */
+  --brand-contrast: #ffffff;
 }
 
-/* Prose spacing tweaks if using @tailwindcss/typography */
+/* Smooth fonts + scroll */
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; scroll-behavior: smooth; }
+body { color: var(--text); background: var(--bg); }
+
+/* Better focus ring */
+:focus-visible {
+  outline: 2px solid rgb(59 130 246 / 0.7);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* Subtle card shadow */
+.card-shadow { box-shadow: 0 10px 25px rgba(15,23,42,0.06), 0 2px 6px rgba(15,23,42,0.04); }
+
+/* Touch-friendly tap target */
+.btn { @apply rounded-xl px-4 py-2 text-sm font-medium transition; }
+
+/* Shimmer (can be used later for loading) */
+@keyframes shimmer {
+  0% { background-position: -700px 0; }
+  100% { background-position: 700px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg,#f3f4f6 25%,#e5e7eb 37%,#f3f4f6 63%);
+  background-size: 1400px 100%;
+  animation: shimmer 1.25s infinite linear;
+}
+
+/* Prose spacing tweak (keep yours) */
 .prose :where(p):not(:where([class~="not-prose"] *)) {
   margin-top: 0.5rem;
   margin-bottom: 0.5rem;
