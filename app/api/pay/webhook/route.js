@@ -1,60 +1,93 @@
-// app/api/pay/webhook/route.js
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { adminDb } from "../../../../lib/firebaseAdmin";
+import { adminDb } from "@/lib/firebaseAdmin";
 
-export const runtime = "nodejs";        // ensure Node runtime on Vercel
-export const dynamic = "force-dynamic"; // always run at the edge of serverless
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2024-06-20",
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export async function POST(req) {
-  const sig = req.headers.get("stripe-signature");
-  const rawBody = await req.text();
-
-  let event;
   try {
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error("❌ Webhook signature verify failed:", err.message);
-    return NextResponse.json({ ok: false }, { status: 400 });
-  }
+    const sig = req.headers.get("stripe-signature");
+    const rawBody = await req.text(); // IMPORTANT: read raw text
+    const secret = process.env.STRIPE_WEBHOOK_SECRET;
 
-  console.log("✅ Webhook received:", event.type);
-
-  try {
-    if (event.type === "payment_intent.succeeded") {
-      const pi = event.data.object;
-      console.log("💰 PaymentIntent succeeded:", pi.id, pi.amount);
-
-      // persist to Firestore (server/admin)
-      await adminDb.collection("payments").add({
-        stripeId: pi.id,
-        amount: pi.amount,
-        currency: pi.currency,
-        status: pi.status,
-        createdAt: new Date(),
-        source: "vercel-webhook",
-      });
-    } else if (event.type === "payment_intent.payment_failed") {
-      const pi = event.data.object;
-      console.warn("⚠️ PaymentIntent failed:", pi.id);
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(rawBody, sig, secret);
+    } catch (err) {
+      console.error("Webhook signature verification failed:", err.message);
+      return NextResponse.json({ error: "Bad signature" }, { status: 400 });
     }
-  } catch (e) {
-    console.error("🔥 Webhook handler error:", e);
-    return NextResponse.json({ ok: false }, { status: 500 });
-  }
 
-  return NextResponse.json({ received: true }, { status: 200 });
+    // Handle a few useful events
+    if (event.type === "payment_intent.succeeded") {
+      const pi = event.data.object; // PaymentIntent
+      console.log("✅ Webhook received: payment_intent.succeeded", pi.id, pi.amount);
+      await adminDb
+        .collection("payments")
+        .doc(pi.id)
+        .set(
+          {
+            status: pi.status,
+            amount: pi.amount,
+            currency: pi.currency,
+            customer: pi.customer ?? null,
+            created: pi.created,
+            updatedAt: Date.now(),
+            source: "webhook",
+          },
+          { merge: true }
+        );
+    } else if (event.type === "payment_intent.created") {
+      const pi = event.data.object;
+      console.log("✅ Webhook received: payment_intent.created", pi.id);
+      await adminDb
+        .collection("payments")
+        .doc(pi.id)
+        .set(
+          {
+            status: pi.status,
+            amount: pi.amount,
+            currency: pi.currency,
+            created: pi.created,
+            updatedAt: Date.now(),
+            source: "webhook",
+          },
+          { merge: true }
+        );
+    } else if (event.type === "charge.succeeded") {
+      const ch = event.data.object;
+      console.log("✅ Webhook received: charge.succeeded", ch.id);
+      await adminDb
+        .collection("charges")
+        .doc(ch.id)
+        .set(
+          {
+            status: ch.status,
+            amount: ch.amount,
+            currency: ch.currency,
+            payment_intent: ch.payment_intent ?? null,
+            created: ch.created,
+            updatedAt: Date.now(),
+            source: "webhook",
+          },
+          { merge: true }
+        );
+    }
+
+    return new NextResponse(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Webhook handler error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
 }
 
-// Important: Next.js needs the raw body for Stripe verification
+// Tell Next to give us the raw body for this route (needed for Stripe signatures)
 export const config = {
   api: {
     bodyParser: false,
