@@ -21,7 +21,7 @@ export async function POST(req) {
       automatic_payment_methods: { enabled: true },
       // These help your webhook pick up an email reliably:
       receipt_email: email || undefined,
-      metadata: email ? { email } : undefined,
+      metadata: { email: email || "" },
     });
 
     return NextResponse.json({ clientSecret: intent.client_secret });
