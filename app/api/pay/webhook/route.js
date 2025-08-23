@@ -5,91 +5,75 @@ import { adminDb } from "@/lib/firebaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: "2025-07-30.basil",
+});
 
 export async function POST(req) {
+  const sig = req.headers.get("stripe-signature");
+  const body = await req.text();
+
+  let event;
   try {
-    const sig = req.headers.get("stripe-signature");
-    const rawBody = await req.text(); // IMPORTANT: read raw text
-    const secret = process.env.STRIPE_WEBHOOK_SECRET;
+    event = stripe.webhooks.constructEvent(
+      body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("❌ Webhook signature verification failed:", err.message);
+    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
 
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(rawBody, sig, secret);
-    } catch (err) {
-      console.error("Webhook signature verification failed:", err.message);
-      return NextResponse.json({ error: "Bad signature" }, { status: 400 });
-    }
+  console.log("✅ Webhook received:", event.type);
 
-    // Handle a few useful events
-    if (event.type === "payment_intent.succeeded") {
+  try {
+    // Common objects
+    const type = event.type;
+
+    if (type === "payment_intent.succeeded" || type === "payment_intent.created") {
       const pi = event.data.object; // PaymentIntent
-      console.log("✅ Webhook received: payment_intent.succeeded", pi.id, pi.amount);
-      await adminDb
-        .collection("payments")
-        .doc(pi.id)
-        .set(
-          {
-            status: pi.status,
-            amount: pi.amount,
-            currency: pi.currency,
-            customer: pi.customer ?? null,
-            created: pi.created,
-            updatedAt: Date.now(),
-            source: "webhook",
-          },
-          { merge: true }
-        );
-    } else if (event.type === "payment_intent.created") {
-      const pi = event.data.object;
-      console.log("✅ Webhook received: payment_intent.created", pi.id);
-      await adminDb
-        .collection("payments")
-        .doc(pi.id)
-        .set(
-          {
-            status: pi.status,
-            amount: pi.amount,
-            currency: pi.currency,
-            created: pi.created,
-            updatedAt: Date.now(),
-            source: "webhook",
-          },
-          { merge: true }
-        );
-    } else if (event.type === "charge.succeeded") {
-      const ch = event.data.object;
-      console.log("✅ Webhook received: charge.succeeded", ch.id);
-      await adminDb
-        .collection("charges")
-        .doc(ch.id)
-        .set(
-          {
-            status: ch.status,
-            amount: ch.amount,
-            currency: ch.currency,
-            payment_intent: ch.payment_intent ?? null,
-            created: ch.created,
-            updatedAt: Date.now(),
-            source: "webhook",
-          },
-          { merge: true }
-        );
+      await adminDb.collection("payments").doc(pi.id).set(
+        {
+          status: pi.status,
+          amount: pi.amount,
+          currency: pi.currency,
+          customer: pi.customer ?? null,
+          // Try official receipt_email first, then metadata fallback
+          email: pi.receipt_email ?? pi.metadata?.email ?? null,
+          created: pi.created,
+          lastEvent: type,
+        },
+        { merge: true }
+      );
     }
 
-    return new NextResponse(JSON.stringify({ received: true }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    if (type === "charge.succeeded" || type === "charge.updated") {
+      const ch = event.data.object; // Charge
+      await adminDb.collection("charges").doc(ch.id).set(
+        {
+          status: ch.status,
+          amount: ch.amount,
+          currency: ch.currency,
+          customer: ch.customer ?? null,
+          payment_intent: ch.payment_intent ?? null,
+          receipt_email: ch.receipt_email ?? null,
+          created: ch.created,
+          lastEvent: type,
+        },
+        { merge: true }
+      );
+    }
+
+    return NextResponse.json({ received: true }, { status: 200 });
   } catch (err) {
     console.error("Webhook handler error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
   }
 }
 
-// Tell Next to give us the raw body for this route (needed for Stripe signatures)
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // raw body for Stripe signature verification
   },
 };
