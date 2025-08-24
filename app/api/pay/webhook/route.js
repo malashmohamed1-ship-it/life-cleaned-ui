@@ -11,26 +11,20 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 
 export async function POST(req) {
   const sig = req.headers.get("stripe-signature");
-  const body = await req.text();
+  const raw = await req.text();
 
   let event;
   try {
-    event = stripe.webhooks.constructEvent(
-      body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
+    event = stripe.webhooks.constructEvent(raw, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error("❌ Webhook signature verification failed:", err.message);
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
   console.log("✅ Webhook received:", event.type);
+  const type = event.type;
 
   try {
-    // Common objects
-    const type = event.type;
-
     if (type === "payment_intent.succeeded" || type === "payment_intent.created") {
       const pi = event.data.object; // PaymentIntent
       await adminDb.collection("payments").doc(pi.id).set(
@@ -39,7 +33,7 @@ export async function POST(req) {
           amount: pi.amount,
           currency: pi.currency,
           customer: pi.customer ?? null,
-          // Try official receipt_email first, then metadata fallback
+          // Try PI first; may still be empty until the charge event arrives
           email: pi.receipt_email ?? pi.metadata?.email ?? null,
           created: pi.created,
           lastEvent: type,
@@ -50,6 +44,9 @@ export async function POST(req) {
 
     if (type === "charge.succeeded" || type === "charge.updated") {
       const ch = event.data.object; // Charge
+      const chargeEmail = ch.billing_details?.email ?? ch.receipt_email ?? null;
+
+      // 1) Write/merge the charge document
       await adminDb.collection("charges").doc(ch.id).set(
         {
           status: ch.status,
@@ -63,6 +60,17 @@ export async function POST(req) {
         },
         { merge: true }
       );
+
+      // 2) Also backfill email onto the related Payment doc (this is the key bit)
+      if (ch.payment_intent && chargeEmail) {
+        await adminDb.collection("payments").doc(ch.payment_intent).set(
+          {
+            email: chargeEmail,
+            lastEvent: type, // optional: reflects latest source of truth
+          },
+          { merge: true }
+        );
+      }
     }
 
     return NextResponse.json({ received: true }, { status: 200 });
@@ -72,8 +80,5 @@ export async function POST(req) {
   }
 }
 
-export const config = {
-  api: {
-    bodyParser: false, // raw body for Stripe signature verification
-  },
-};
+// Keep raw body for Stripe verification
+export const config = { api: { bodyParser: false } };
