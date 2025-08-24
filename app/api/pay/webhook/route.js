@@ -5,36 +5,60 @@ import { adminDb } from "@/lib/firebaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-07-30.basil",
-});
+// IMPORTANT: Vercel → Project Settings → Environment Variables must include:
+// STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, FIREBASE_* (admin creds)
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY /*, { apiVersion: "2025-07-30.basil" }*/);
+
+// ⚠️ keep raw body for Stripe signature verification
+export const config = { api: { bodyParser: false } };
 
 export async function POST(req) {
   const sig = req.headers.get("stripe-signature");
-  const raw = await req.text();
+  const rawBody = await req.text();
 
   let event;
   try {
-    event = stripe.webhooks.constructEvent(raw, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    event = stripe.webhooks.constructEvent(
+      rawBody,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
   } catch (err) {
-    console.error("❌ Webhook signature verification failed:", err.message);
+    console.error("❌ Webhook signature check failed:", err?.message);
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  console.log("✅ Webhook received:", event.type);
   const type = event.type;
+  console.log("✅ Webhook received:", type);
 
   try {
-    if (type === "payment_intent.succeeded" || type === "payment_intent.created") {
+    // ---- Handle PaymentIntent events ---------------------------------------
+    if (type === "payment_intent.created" || type === "payment_intent.succeeded") {
       const pi = event.data.object; // PaymentIntent
+
+      // Find email in several places
+      let email =
+        pi.receipt_email ||
+        (pi.metadata && pi.metadata.email) ||
+        null;
+
+      // If still missing, and there is a customer, fetch the customer’s email
+      if (!email && pi.customer) {
+        try {
+          const cust = await stripe.customers.retrieve(pi.customer);
+          if (!cust.deleted && cust.email) email = cust.email;
+        } catch (e) {
+          console.warn("Could not retrieve customer for email:", e.message);
+        }
+      }
+
       await adminDb.collection("payments").doc(pi.id).set(
         {
           status: pi.status,
           amount: pi.amount,
           currency: pi.currency,
           customer: pi.customer ?? null,
-          // Try PI first; may still be empty until the charge event arrives
-          email: pi.receipt_email ?? pi.metadata?.email ?? null,
+          email: email ?? null,
           created: pi.created,
           lastEvent: type,
         },
@@ -42,11 +66,26 @@ export async function POST(req) {
       );
     }
 
+    // ---- Handle Charge events ----------------------------------------------
     if (type === "charge.succeeded" || type === "charge.updated") {
       const ch = event.data.object; // Charge
-      const chargeEmail = ch.billing_details?.email ?? ch.receipt_email ?? null;
 
-      // 1) Write/merge the charge document
+      // Charges often contain email directly
+      let receiptEmail =
+        ch.receipt_email ||
+        (ch.billing_details && ch.billing_details.email) ||
+        null;
+
+      // If still missing, try to pull from the customer record
+      if (!receiptEmail && ch.customer) {
+        try {
+          const cust = await stripe.customers.retrieve(ch.customer);
+          if (!cust.deleted && cust.email) receiptEmail = cust.email;
+        } catch (e) {
+          console.warn("Could not retrieve customer for charge email:", e.message);
+        }
+      }
+
       await adminDb.collection("charges").doc(ch.id).set(
         {
           status: ch.status,
@@ -54,23 +93,12 @@ export async function POST(req) {
           currency: ch.currency,
           customer: ch.customer ?? null,
           payment_intent: ch.payment_intent ?? null,
-          receipt_email: ch.receipt_email ?? null,
+          receipt_email: receiptEmail ?? null,
           created: ch.created,
           lastEvent: type,
         },
         { merge: true }
       );
-
-      // 2) Also backfill email onto the related Payment doc (this is the key bit)
-      if (ch.payment_intent && chargeEmail) {
-        await adminDb.collection("payments").doc(ch.payment_intent).set(
-          {
-            email: chargeEmail,
-            lastEvent: type, // optional: reflects latest source of truth
-          },
-          { merge: true }
-        );
-      }
     }
 
     return NextResponse.json({ received: true }, { status: 200 });
@@ -79,6 +107,3 @@ export async function POST(req) {
     return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
   }
 }
-
-// Keep raw body for Stripe verification
-export const config = { api: { bodyParser: false } };
